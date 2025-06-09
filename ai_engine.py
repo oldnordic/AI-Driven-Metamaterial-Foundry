@@ -8,9 +8,12 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.exceptions import NotFittedError
+import joblib
+import os
 
 # --- Configuration for AI Engine ---
 MODEL_SAVE_PATH = "ai_foundry_model.pth"
+PREPROCESSOR_SAVE_PATH = "ai_foundry_preprocessors.joblib"
 
 # --- 1. Custom Dataset Class ---
 class MaterialDataset(Dataset):
@@ -45,190 +48,169 @@ class SimpleMaterialPredictor(nn.Module):
         x = self.fc3(x)
         return x
 
-# --- 3. Training Function ---
+# --- 3. Training Function (MODIFIED) ---
 def train_ai_model(dataframe_of_features, progress_callback=None, log_message_callback=None):
     if dataframe_of_features.empty:
         if log_message_callback:
             log_message_callback("No data for AI pre-training. Skipping model training.")
         return
 
-    # Filter out rows where target properties are NaN or None, as these cannot be trained on
+    # Filter out rows where target properties are NaN or None
     target_cols = ["band_gap", "formation_energy_per_atom", "total_magnetization", "is_metal"]
     initial_rows = len(dataframe_of_features)
     dataframe_of_features_cleaned = dataframe_of_features.dropna(subset=target_cols)
     
     if len(dataframe_of_features_cleaned) == 0:
         if log_message_callback:
-            log_message_callback("No valid data (features or targets) after cleaning for AI training. Skipping.")
+            log_message_callback("No valid data for AI training after cleaning. Skipping.")
         return
-    elif len(dataframe_of_features_cleaned) < initial_rows:
-        if log_message_callback:
-            log_message_callback(f"Removed {initial_rows - len(dataframe_of_features_cleaned)} rows with missing target properties for AI training.")
 
     if log_message_callback:
         log_message_callback(f"Starting AI model training with {len(dataframe_of_features_cleaned)} cleaned material entries...")
 
-    # Define all possible feature columns
     all_feature_cols = [
         "lattice_a", "lattice_b", "lattice_c", "lattice_alpha", "lattice_beta",
-        "lattice_gamma", "volume", "density", "num_sites", "space_group",
-        "unique_elements_count",
-        "elements_present"
+        "lattice_gamma", "volume", "density", "num_sites", "space_group"
     ]
     
-    # Filter to only include columns actually present in the DataFrame
     available_feature_cols = [col for col in all_feature_cols if col in dataframe_of_features_cleaned.columns]
     available_target_cols = [col for col in target_cols if col in dataframe_of_features_cleaned.columns]
 
     if not available_feature_cols or not available_target_cols:
         if log_message_callback:
-            log_message_callback("Not enough valid features or targets for AI training after cleaning. Skipping.")
+            log_message_callback("Not enough valid features or targets for AI training. Skipping.")
         return
 
-    # --- Preprocessing before splitting ---
     processed_df = dataframe_of_features_cleaned.copy()
-    
     label_encoders = {}
     scalers = {}
 
-    # Identify categorical and numerical columns based on availability
-    categorical_cols = []
-    numerical_cols = []
-
-    for col in available_feature_cols:
-        if col in ['space_group', 'elements_present']:
-            categorical_cols.append(col)
-        else:
-            numerical_cols.append(col)
+    categorical_cols = ['space_group']
+    numerical_cols = [col for col in available_feature_cols if col not in categorical_cols]
 
     # 1. Handle Categorical Features
     for col in categorical_cols:
         if col in processed_df.columns:
-            if col == 'elements_present':
-                # Convert string representation of lists to tuples for LabelEncoder
-                processed_df[col] = processed_df[col].apply(
-                    lambda x: tuple(json.loads(x)) if isinstance(x, str) else (x if isinstance(x, tuple) else ())
-                )
-            
             le = LabelEncoder()
-            # Fit and transform the entire column. Handle potential NaNs by filling before fit_transform
-            # Also ensure the column is treated as object dtype for LabelEncoder if it contains mixed types
-            processed_df[col] = processed_df[col].astype(str).fillna('__MISSING__') # Convert all to string for consistent encoding
-            processed_df[col] = le.fit_transform(processed_df[col])
+            processed_df[col] = le.fit_transform(processed_df[col].astype(str))
             label_encoders[col] = le
-        else:
-            processed_df[col] = -1 # Default numerical value for missing categorical column
-
 
     # 2. Handle Numerical Features
     for col in numerical_cols:
         if col in processed_df.columns:
-            processed_df[col] = pd.to_numeric(processed_df[col], errors='coerce').fillna(0).astype(float) # Ensure float
+            processed_df[col] = pd.to_numeric(processed_df[col], errors='coerce').fillna(0)
             scaler = StandardScaler()
-            processed_df[col] = scaler.fit_transform(processed_df[[col]])
+            processed_df[col] = scaler.fit_transform(processed_df[[col]]).flatten()
             scalers[col] = scaler
-        else:
-            processed_df[col] = 0.0 # Add missing numerical feature columns with zeros
 
-    # Ensure target columns are numeric and handle NaNs
-    for col in available_target_cols:
-        processed_df[col] = pd.to_numeric(processed_df[col], errors='coerce').fillna(0).astype(float) # Ensure float
+    # 3. Create Tensors
+    features_tensor = torch.tensor(processed_df[available_feature_cols].values, dtype=torch.float32)
     
-    # --- Final check before tensor conversion ---
-    final_features_df = processed_df[available_feature_cols].copy() 
-    
-    # --- NEW DEBUGGING CODE START ---
-    if log_message_callback:
-        log_message_callback("--- Final Feature DataFrame dtypes and problematic values ---")
-        for col in final_features_df.columns:
-            col_dtype = final_features_df[col].dtype
-            log_message_callback(f"Column '{col}': dtype = {col_dtype}")
-            if col_dtype == object:
-                # Find non-numeric/non-boolean items if it's an object dtype
-                non_numeric_rows = final_features_df[col].apply(lambda x: not isinstance(x, (int, float, bool))).sum()
-                if non_numeric_rows > 0:
-                    log_message_callback(f"  --> WARNING: Contains {non_numeric_rows} non-numeric/non-boolean objects. Sample:")
-                    log_message_callback(f"    {final_features_df[col][~final_features_df[col].apply(lambda x: isinstance(x, (int, float, bool)))].head()}")
-                
-                # Attempt to convert again, explicitly to float
-                try:
-                    final_features_df[col] = final_features_df[col].astype(float)
-                    log_message_callback(f"  --> Successfully converted '{col}' to float.")
-                except Exception as e:
-                    log_message_callback(f"  --> ERROR: Failed to convert '{col}' to float even after previous steps: {e}. Values will be problematic.")
-            elif not pd.api.types.is_numeric_dtype(final_features_df[col]) and not pd.api.types.is_bool_dtype(final_features_df[col]):
-                log_message_callback(f"  --> WARNING: Column '{col}' is not numeric or boolean. dtype = {col_dtype}")
-                
-    log_message_callback("--------------------------------------------------")
-    # --- NEW DEBUGGING CODE END ---
+    # --- NEW AND FINAL FIX HERE ---
+    # Select the target columns and forcefully convert the entire block to float32
+    targets_df = processed_df[available_target_cols].astype(np.float32)
+    targets_tensor = torch.tensor(targets_df.values, dtype=torch.float32)
+    # --- END OF FIX ---
 
-    features_tensor = torch.tensor(final_features_df.values, dtype=torch.float32)
-    targets_tensor = torch.tensor(processed_df[available_target_cols].values, dtype=torch.float32)
-
-    # --- Data Splitting and DataLoader Creation ---
+    # 4. Split data and create DataLoaders
     X_train, X_val, y_train, y_val = train_test_split(
         features_tensor, targets_tensor, test_size=0.2, random_state=42
     )
 
     train_dataset = MaterialDataset(X_train, y_train)
     val_dataset = MaterialDataset(X_val, y_val)
-
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
 
-    # --- Model Initialization ---
+    # 5. Initialize and train the model
     input_dim = len(available_feature_cols)
     output_dim = len(available_target_cols)
     model = SimpleMaterialPredictor(input_dim, output_dim)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    if log_message_callback:
-        log_message_callback(f"Using device: {device}")
+    if log_message_callback: log_message_callback(f"Using device: {device}")
 
-    # --- Loss Function and Optimizer ---
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=0.001)
-
-    # --- Training Loop ---
     num_epochs = 20
+
     for epoch in range(num_epochs):
         model.train()
-        running_loss = 0.0
         for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
-            
             optimizer.zero_grad()
             outputs = model(inputs)
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
-
-            running_loss += loss.item() * inputs.size(0)
         
-        epoch_loss = running_loss / len(train_dataset)
-
-        # --- Validation Loop ---
         model.eval()
-        val_running_loss = 0.0
+        val_loss = 0
         with torch.no_grad():
             for inputs, targets in val_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
                 outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                val_running_loss += loss.item() * inputs.size(0)
+                val_loss += criterion(outputs, targets).item()
         
-        val_epoch_loss = val_running_loss / len(val_dataset)
-
+        val_epoch_loss = val_loss / len(val_loader)
         if progress_callback:
-            progress_callback(epoch + 1, num_epochs, f"Epoch {epoch+1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_epoch_loss:.4f}")
-        if log_message_callback:
-            log_message_callback(f"Epoch {epoch+1}/{num_epochs}, Train Loss: {epoch_loss:.4f}, Val Loss: {val_epoch_loss:.4f}")
+            progress_callback(epoch + 1, num_epochs, f"Epoch {epoch+1}/{num_epochs}, Val Loss: {val_epoch_loss:.4f}")
 
-    # --- Save the trained model ---
+    # 6. Save model and pre-processors
     torch.save(model.state_dict(), MODEL_SAVE_PATH)
+    joblib.dump({
+        'scalers': scalers,
+        'label_encoders': label_encoders,
+        'feature_order': available_feature_cols,
+        'target_order': available_target_cols
+    }, PREPROCESSOR_SAVE_PATH)
+
     if log_message_callback:
         log_message_callback(f"AI model saved to {MODEL_SAVE_PATH}")
+        log_message_callback(f"Pre-processors saved to {PREPROCESSOR_SAVE_PATH}")
 
-    if log_message_callback:
-        log_message_callback("AI model training complete. Model's foundational understanding established.")
+# --- Prediction Function (No changes needed) ---
+def predict_properties(input_data_dict, log_message_callback=None):
+    if not os.path.exists(MODEL_SAVE_PATH) or not os.path.exists(PREPROCESSOR_SAVE_PATH):
+        raise FileNotFoundError("Model or pre-processor file not found. Please train the model first.")
+
+    preprocessors = joblib.load(PREPROCESSOR_SAVE_PATH)
+    scalers = preprocessors['scalers']
+    label_encoders = preprocessors['label_encoders']
+    feature_order = preprocessors['feature_order']
+    target_order = preprocessors['target_order']
+
+    input_dim = len(feature_order)
+    output_dim = len(target_order)
+    model = SimpleMaterialPredictor(input_dim, output_dim)
+    model.load_state_dict(torch.load(MODEL_SAVE_PATH))
+    model.eval()
+
+    input_df = pd.DataFrame([input_data_dict])
+    processed_features = []
+    for col in feature_order:
+        value = input_df.loc[0, col]
+        if col in scalers:
+            scaled_val = scalers[col].transform(np.array([[value]]))[0, 0]
+            processed_features.append(scaled_val)
+        elif col in label_encoders:
+            try:
+                encoded_val = label_encoders[col].transform([str(value)])[0]
+                processed_features.append(encoded_val)
+            except ValueError:
+                if log_message_callback:
+                    log_message_callback(f"Warning: Unseen category '{value}' for '{col}'. Using -1 as default.")
+                processed_features.append(-1)
+        else:
+             raise ValueError(f"Feature '{col}' not found in any pre-processor.")
+    
+    input_tensor = torch.tensor([processed_features], dtype=torch.float32)
+
+    with torch.no_grad():
+        predicted_tensor = model(input_tensor)
+    
+    predictions = predicted_tensor.numpy().flatten()
+
+    result_dict = {target_order[i]: float(predictions[i]) for i in range(len(target_order))}
+    
+    return result_dict

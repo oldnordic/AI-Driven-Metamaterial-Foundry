@@ -1,20 +1,19 @@
 # AI-Driven Metamaterial Foundry: A Blueprint for Accelerated Materials Innovation
 
 ## Overview
-This project represents the foundational steps towards an **AI-Driven Metamaterial Foundry**, a revolutionary system aiming to transform materials discovery. It combines advanced computational tools with experimental data pipelines to design and create novel materials with precisely engineered properties, atom by atom.
-
-The core vision is to move from laborious, serendipitous discovery to an on-demand, AI-guided paradigm for creating materials with unprecedented functionalities. This project focuses on the initial pillar: **Data Acquisition and Pre-processing** for AI training.
+This project lays the groundwork for an **AI-Driven Metamaterial Foundry**, a novel approach intended to reshape materials discovery. By integrating advanced computational tools with data pipelines, it aims to facilitate the design and creation of new materials with precisely engineered properties. The overarching objective is to shift from conventional, often labor-intensive discovery methods to a more efficient, AI-assisted framework for developing materials with enhanced functionalities. This initial phase specifically targets **Data Acquisition and Pre-processing**, establishing a robust foundation for subsequent AI model training.
 
 ## Key Features Implemented (Initial Phase)
+This initial phase focuses on establishing a robust, verifiable data pipeline, which is crucial for building reliable AI models, especially given concerns around AI "hallucinations" and the need for empirically sound results. Key features implemented include:
 
--   **Modular Python Application:** Built with a clean, modular structure.
--   **Graphical User Interface (GUI):** Developed using PyQt5 for interactive control.
--   **Multi-threaded Processing:** Ensures a responsive GUI during long-running tasks.
--   **Materials Data Acquisition:** Connects to the **Materials Project API** to download known crystal structures (CIF files) and their associated properties (e.g., band gap, formation energy, magnetization).
--   **Robust Data Parsing:** Processes downloaded CIF files, extracts key crystallographic features (lattice parameters, space group, elemental composition, etc.), and combines them with material properties.
--   **SQLite Database Backend:** Stores all parsed and processed material data in a local SQLite database for efficient management and querying, replacing flat CSV files.
--   **Conceptual AI Pre-training:** Demonstrates a foundational AI training loop using PyTorch, leveraging local AMD GPUs (via ROCm) to learn relationships between material structures and properties.
--   **Progress Indicators:** Provides visual progress bars and status updates for long-running processes.
+-   **Modular Python Application:** Designed with a clean, modular architecture for maintainability and clarity.
+-   **Graphical User Interface (GUI):** Provides an interactive PyQt5-based interface, ensuring user control and transparency in data handling.
+-   **Multi-threaded Processing:** Implemented to maintain GUI responsiveness, even during extensive data operations.
+-   **Materials Data Acquisition:** Systematically connects to the **Materials Project API** to download authenticated crystal structures (CIF files) and their associated, empirically derived properties (e.g., band gap, formation energy, magnetization). This direct sourcing from established scientific databases helps to mitigate the risk of fabricated data.
+-   **Robust Data Parsing:** Employs rigorous parsing methods for downloaded CIF files, extracting key crystallographic features (e.g., lattice parameters, space group, elemental composition) and integrating them with verified material properties. The emphasis is on accurate extraction and validation of data points.
+-   **SQLite Database Backend:** Utilizes a local SQLite database for efficient, structured storage and querying of all parsed and processed material data, moving away from less reliable flat-file formats. This provides a clear, auditable trail for the data used in subsequent AI processes.
+-   **Foundational AI Pre-training:** Includes a preliminary AI training loop using PyTorch, leveraging local AMD GPUs (via ROCm). This phase focuses on learning fundamental relationships between verified material structures and their properties, with an inherent understanding that the model's outputs must be traceable back to real, acquired data to prevent "hallucinations."
+-   **Progress Indicators:** Offers clear visual progress bars and status updates for long-running processes, promoting transparency and user awareness of data processing stages.
 
 ## Vision of the Full Foundry (Beyond this Project's Scope)
 This project is the first step towards a complete AI-Driven Metamaterial Foundry, envisioned around four interconnected pillars:

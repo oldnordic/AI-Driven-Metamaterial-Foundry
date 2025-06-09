@@ -1,0 +1,22 @@
+# Python virtual environment
+.venv/
+.venv_py311/ # If you used this name for your venv
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE files
+.vscode/
+.idea/
+
+# Data files (often large or regenerated)
+material_lattice_data/
+*.db # SQLite database
+*.json # Properties JSON file
+*.cif # Downloaded CIF files
+ai_foundry_model.pth # Trained AI model weights
+
+# Environment variables (CRUCIAL for security)
+.env
